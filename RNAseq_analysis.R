@@ -73,6 +73,21 @@ top_correlated <- c(genes_PC1, genes_PC2, genes_PC3, genes_PC4, genes_PC5)
 print(correlated_genes)
 corrplot(var_cor[top_correlated,])
 
+# DA analysis with mixOmics
+plsda_res <- plsda(X_norm, metadata$Remarque, ncomp = 3)
+
+plotIndiv(plsda_res, ind.names = TRUE, legend=TRUE,
+          comp=c(1,2), ellipse = TRUE, 
+          title = 'PLS-DA comp 1-2',
+          X.label = 'PLS-DA comp 1', Y.label = 'PLS-DA comp 2')
+
+plotVar(plsda_res, cutoff = 0.99)
+
+# Compute the correlations between each gene (variable) and the PLS-DA components.
+var_cor_da <- cor(X_norm, plsda_res$variates$X)
+top_plsda_comp1 <- rownames(var_cor_da)[abs(var_cor_da[, 1]) > cutoff]
+corrplot(var_cor_da[top_plsda_comp1,])
+
 # Differential expression
 # Load data in a deseq2 object
 dds <- DESeqDataSetFromMatrix(countData = t(X),
@@ -96,7 +111,8 @@ resLFC <- lfcShrink(dds, coef="Remarque_red.mutation_vs_none", type="apeglm")
 resLFC
 
 summary(resLFC)
-plotMA(resLFC, ylim=c(-6,6))
+DESeq2::plotMA(resLFC, ylim=c(-6,6))
+
 
 # Gene counts of the gene with lowest padj
 plotCounts(dds, gene=which.min(res$padj), intgroup="Remarque")
@@ -118,10 +134,12 @@ select <- rownames(resOrdered)[1:20]
 topVarGenes <- head(order(rowVars(assay(ntd)), decreasing = TRUE), 20)
   
 df <- as.data.frame(colData(dds)[,c("Remarque","cultivar")])
-pheatmap(assay(ntd)[select,], cluster_rows=FALSE, show_rownames=TRUE,
-         cluster_cols=FALSE, annotation_col=df)
+pheatmap(assay(ntd)[select,], cluster_rows=TRUE, show_rownames=TRUE,
+         cluster_cols=TRUE, annotation_col=df)
 
 pheatmap(assay(ntd)[topVarGenes,], annotation_col = df)
+#pheatmap(assay(ntd)[top_plsda_comp1,], annotation_col = df)
+
 
 # Produce list of DE genes 
 resSig <- subset(resOrdered, padj < 0.05)
@@ -134,11 +152,34 @@ barplot(sort(res$log2FoldChange, decreasing = T))
 barplot(sort(resLFC$log2FoldChange, decreasing = T)) # Shrinked ones 
 
 # List of genes ranked by lfc
-ranked_genes <- rownames(res[order(res$log2FoldChange, decreasing = T),])
+ranked_genes_vv <- rownames(res[order(res$log2FoldChange, decreasing = T),])
 
-ranked_genes_nv <- setNames(as.numeric(res[order(res$log2FoldChange, decreasing = T),]$log2FoldChange), ranked_genes)
+ranked_genes_vv_nv <- setNames(as.numeric(res[order(res$log2FoldChange, decreasing = T),]$log2FoldChange), ranked_genes_vv)
 
 # Translate Vv to NCBI ids
+translate_vv_to_id <- function(de_res, translation_df, column) {
+  
+  # Make a data frame with the Vv genes ordered by log2FC and there corresponding id in the other annotation
+  ranked_genes_df <- data.frame(chasselas = rownames(de_res), lfc = de_res$log2FoldChange, stringsAsFactors = FALSE) %>%
+    left_join(ch_pn_genes %>% 
+                mutate(ncbi_id = sub("^LOC", "", ncbi_id)),
+              by = "chasselas") %>%
+    dplyr::filter(!is.na(!!sym(column))) %>%
+    arrange(desc(lfc))
+  
+  if (column == 'ncbi_id') {
+    ranked_genes_df <- ranked_genes_df%>%
+      arrange(desc(abs(lfc))) %>%
+      distinct(ncbi_id, .keep_all = TRUE) %>% # remove duplicated ncbi locus, keeping the ones with highest lfc (to avoid error in gseKEGG)
+      arrange(desc(lfc))
+  }
+  
+  ranked_gene_list <- pull(ranked_genes_df, !!sym(column)) 
+  ranked_gene_nv <- setNames(ranked_genes_df$lfc, ranked_gene_list)
+  
+  return(list(names=ranked_gene_list, nv=ranked_gene_nv))
+}
+
 ranked_genes_df <- data.frame(chasselas = rownames(res), lfc = res$log2FoldChange, stringsAsFactors = FALSE) %>%
   left_join(ch_pn_genes %>% 
               mutate(ncbi_id = sub("^LOC", "", ncbi_id)),
@@ -148,20 +189,42 @@ ranked_genes_df <- data.frame(chasselas = rownames(res), lfc = res$log2FoldChang
   distinct(ncbi_id, .keep_all = TRUE) %>% # remove duplicated ncbi locus, keeping the ones with highest lfc (to avoid error in gseKEGG)
   arrange(desc(lfc))
 
-ranked_genes_ncbi <- pull(ranked_genes_df, ncbi_id) 
-ranked_genes_ncbi_nv <- setNames(ranked_genes_df$lfc, ranked_genes_ncbi)
+# NCBI ids
+ranked_genes_ncbi <- translate_vv_to_id(res, ch_pn_genes, 'ncbi_id')
+
+# KEGG KO ids
+ranked_genes_ko <- translate_vv_to_id(res, ch_pn_genes, 'kegg_ko')
 
 # KEGG pathway enrichment analysis
-top_genes <- names(ranked_genes_ncbi_nv)[abs(ranked_genes_ncbi_nv) > 2]
+kegg_enrichment <- function(ranked_genes, organism='vvi', pvalueCutoff=0.2, minLFC=2) {
+  
+  top_genes <- names(ranked_genes$nv)[abs(ranked_genes$nv) > minLFC]
+  
+  kk <- enrichKEGG(gene         = top_genes,
+                   organism     = organism,
+                   pvalueCutoff = pvalueCutoff)
+  
+  kk2 <- gseKEGG(geneList     = ranked_genes$nv,
+                 organism     = organism,
+                 minGSSize    = 10,
+                 pvalueCutoff = pvalueCutoff,
+                 verbose      = FALSE)
+  
+  return(list(ORA=kk, GSEA=kk2))
+}
+
+ke_res_ncbi = kegg_enrichment(ranked_genes_ncbi)
+
+top_genes <- names(ranked_genes_ncbi$nv)[abs(ranked_genes_ncbi$nv) > 2]
 
 kk <- enrichKEGG(gene         = top_genes,
                  organism     = 'vvi',
                  pvalueCutoff = 0.05)
 
-kk2 <- gseKEGG(geneList     = ranked_genes_ncbi_nv,
+kk2 <- gseKEGG(geneList     = ranked_genes_ncbi$nv,
                organism     = 'vvi',
                minGSSize    = 10,
-               pvalueCutoff = 0.1,
+               pvalueCutoff = 0.2,
                verbose      = FALSE)
 head(kk2)
 # Visualise flavonoid pathway
@@ -190,7 +253,7 @@ pathways <- lapply(fgseaRes$leadingEdge, function(x) unlist(strsplit(x, "/")))
 names(pathways) <- fgseaRes$pathway
 
 # Plot the GSEA table:
-plotGseaTable(pathways, ranked_genes_ncbi_nv, fgseaRes, gseaParam = 1)
+plotGseaTable(pathways, ranked_genes_ncbi$nv, fgseaRes, gseaParam = 1)
 
 
 # GO enrichment analysis
@@ -206,3 +269,4 @@ goplot(ego)
 upsetplot(ego)
 dotplot(ego)
 
+AnnotationDbi::select(org.Vvinifera.eg.db, keys=ranked_genes_vv[1:5], columns=c("GOALL", "GENENAME"), keytype="GID")
