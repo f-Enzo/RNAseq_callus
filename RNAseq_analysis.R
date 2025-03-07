@@ -16,12 +16,14 @@ library(org.Vvinifera.eg.db)
 library(enrichplot)
 library(pathview)
 
+setwd("/home/enzo/Documents/rnaseq_callus/")
+
 # Load data
-metadata <- read_csv("Documents/rnaseq_callus/callus_metadata.csv")
-count_table <- read_delim("Documents/rnaseq_callus/featureCount_unstranded.tsv", 
+metadata <- read_csv("callus_metadata.csv")
+count_table <- read_delim("featureCount_unstranded.tsv", 
                           delim = "\t", escape_double = FALSE, 
                           trim_ws = TRUE)
-ch_pn_genes <- read_csv("Documents/GeneFamilies/ch_pn_genes_extended.csv")
+ch_pn_genes <- read_csv("/home/enzo/Documents/GeneFamilies/ch_pn_genes_extended.csv")
 
 # Multivariate analysis 
 X <- count_table %>%
@@ -31,8 +33,10 @@ X <- count_table %>%
   t() %>%  # Transpose
   as.data.frame() %>%
   mutate(Sample = rownames(.)) %>%  # Store rownames in a column
+  mutate(Sample = sub("_.*", "", Sample)) %>%
   arrange(parse_number(Sample)) %>%  # Sort numerically by extracted number
-  dplyr::select(-Sample) #%>% # Drop sample columns
+  remove_rownames %>%
+  column_to_rownames("Sample") # Drop sample columns
   
 # TMM Normalization using edgeR
 dge <- DGEList(counts = as.matrix(X))  # Convert to DGEList
@@ -45,7 +49,7 @@ pca_res = pca(X_norm, ncomp = 5)
 plot(pca_res)
 plotIndiv(pca_res, group = metadata$cultivar, legend = TRUE, comp = c(1,2))
 plotVar(pca_res, cutoff = 0.99)
-biplot(pca_res, group = metadata$cultivar, cutoff = 0.99, legend.title = "Cultivar")
+biplot(pca_res, group = metadata$cultivar, cutoff = 0.99, legend.title = "Cultivar", ind.names = FALSE)
 plotLoadings(pca_res, comp = 1, ndisplay = 20)
 plotLoadings(pca_res, comp = 2, ndisplay = 20)
 
@@ -113,6 +117,14 @@ resLFC
 summary(resLFC)
 DESeq2::plotMA(resLFC, ylim=c(-6,6))
 
+# Perform likelihood ratio test (LRT) (analogous to an ANOVA)
+dds$cultivar <- as.factor(dds$cultivar)
+design(dds) <- ~ cultivar
+dds <- DESeq(dds, test = "LRT", reduced = ~ 1)
+ltr_res <- results(dds)
+ltr_resOrdered <- ltr_res[order(ltr_res$log2FoldChange),]
+sig_variable_genes <- rownames(ltr_res)[which(ltr_res$padj < 0.05)]
+top_variable_genes <- rownames(ltr_resOrdered)[1:20]
 
 # Gene counts of the gene with lowest padj
 plotCounts(dds, gene=which.min(res$padj), intgroup="Remarque")
@@ -131,13 +143,16 @@ select <- order(rowMeans(counts(dds,normalized=TRUE)),
 select <- rownames(resOrdered)[1:20]
 
 # Select top variance genes
-topVarGenes <- head(order(rowVars(assay(ntd)), decreasing = TRUE), 20)
+topVarGenes <- head(order(rowVars(assay(ntd)), decreasing = TRUE), 100)
   
 df <- as.data.frame(colData(dds)[,c("Remarque","cultivar")])
 pheatmap(assay(ntd)[select,], cluster_rows=TRUE, show_rownames=TRUE,
          cluster_cols=TRUE, annotation_col=df)
 
 pheatmap(assay(ntd)[topVarGenes,], annotation_col = df)
+pheatmap(assay(ntd)[top_variable_genes,], annotation_col = df, show_rownames=FALSE)
+pheatmap(assay(ntd), annotation_col = df, show_rownames=FALSE)
+
 #pheatmap(assay(ntd)[top_plsda_comp1,], annotation_col = df)
 
 
@@ -230,7 +245,7 @@ head(kk2)
 # Visualise flavonoid pathway
 browseKEGG(kk, 'vvi00941')
 
-pathview(gene.data = ranked_genes_ncbi_nv, 
+pathview(gene.data = ranked_genes_ncbi$nv, 
          pathway.id = "vvi00941", 
          species = "vvi", 
          limit = list(gene=5, cpd=1))
@@ -257,7 +272,7 @@ plotGseaTable(pathways, ranked_genes_ncbi$nv, fgseaRes, gseaParam = 1)
 
 
 # GO enrichment analysis
-ego <- enrichGO(gene         = ranked_genes,
+ego <- enrichGO(gene         = ranked_genes_vv,
                 OrgDb        = org.Vvinifera.eg.db,
                 keyType      = "GID",      # key type in OrgDb
                 ont          = "BP",       # or "CC" / "MF" 
