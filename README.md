@@ -120,8 +120,8 @@ The analysis employs **whole-genome and RNA sequencing** to identify differentia
 
 ## Related Publications
 
-- Kőrösi et al. (2022) — Genomic basis of teinturier phenotype
-- Röckel et al. (2020) — Anthocyanin biosynthesis characterization
+- Kőrösi et al. (2022) — Comparative Study on Grape Berry Anthocyanins of Various Teinturier Varieties
+- Röckel et al. (2020) — Color Intensity of the Red-Fleshed Berry Phenotype of Vitis vinifera Teinturier Grapes Varies Due to a 408 bp Duplication in the Promoter of VvmybA1
 
 ---
 
