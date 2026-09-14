@@ -1,6 +1,6 @@
 # RNA-seq Analysis of Grapevine Anthocyanin Biosynthesis
 
-Comprehensive RNA-seq analysis pipeline for investigating anthocyanin biosynthesis pathways in grapevine (*Vitis vinifera*) cell cultures across multiple cultivars.
+RNA-seq analysis scripts for investigating anthocyanin biosynthesis pathways in grapevine (*Vitis vinifera*) cell cultures across multiple cultivars.
 
 ## About This Project
 
@@ -125,6 +125,3 @@ The analysis employs **whole-genome and RNA sequencing** to identify differentia
 
 ---
 
-**Author:** Enzo  
-**Repository:** f-Enzo/RNAseq_callus  
-**Language:** R
